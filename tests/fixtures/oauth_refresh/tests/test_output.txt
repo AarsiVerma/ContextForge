@@ -1,0 +1,19 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-7.4.4, pluggy-1.6.0
+rootdir: /tests
+configfile: pyproject.toml
+testpaths: tests
+plugins: anyio-4.13.0, cov-4.1.0, mock-3.15.1, asyncio-0.23.3
+asyncio: mode=Mode.STRICT
+collecting ... collected 8 items
+
+tests/test_auth.py::test_create_access_token PASSED                           [ 12%]
+tests/test_auth.py::test_create_refresh_token PASSED                          [ 25%]
+tests/test_auth.py::test_decode_valid_token PASSED                            [ 37%]
+tests/test_auth.py::test_decode_expired_token PASSED                          [ 50%]
+tests/test_auth.py::test_validate_refresh_token PASSED                        [ 62%]
+tests/test_auth.py::test_validate_access_token PASSED                         [ 75%]
+tests/test_auth.py::test_validate_wrong_token_type PASSED                     [ 87%]
+tests/test_auth.py::test_refresh_endpoint_success PASSED                      [100%]
+
+============================= 8 passed in 0.42s ==============================

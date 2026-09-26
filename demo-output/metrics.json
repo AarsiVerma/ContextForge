@@ -1,0 +1,23 @@
+{
+  "run_id": "demo-1790421911",
+  "bug_id": "AUTH-001",
+  "task": "Debug OAuth refresh endpoint returning 401 for valid refresh tokens",
+  "context_items_total": 50,
+  "candidates_retrieved": 28,
+  "items_selected": 6,
+  "items_excluded": 22,
+  "duplicates_removed": 22,
+  "estimated_tokens": 6710,
+  "context_budget": 8000,
+  "hypotheses_total": 3,
+  "hypotheses_rejected": 1,
+  "files_selected": 4,
+  "files_excluded": 22,
+  "test_results": "passed",
+  "final_status": "fixed",
+  "timestamp": "2026-09-26T11:25:11+00:00",
+  "provenance": {
+    "sources": ["file", "tool", "user"],
+    "files": ["auth/token.py", "auth/endpoints.py", "tests/test_auth.py", "tests/conftest.py", "tests/test_bugs.py"]
+  }
+}
