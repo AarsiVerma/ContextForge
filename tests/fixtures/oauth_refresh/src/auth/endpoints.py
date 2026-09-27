@@ -12,6 +12,7 @@ from auth.token import (
     validate_refresh_token,
     validate_access_token,
     blacklist_token,
+    is_token_blacklisted,
 )
 from database import get_db
 from models.user import User

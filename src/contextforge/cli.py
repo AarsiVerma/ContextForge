@@ -8,25 +8,19 @@ from pathlib import Path
 
 from contextforge import (
     ContextIR,
-    ContextType,
-    ItemStatus,
-    SQLiteStore,
-    DeterministicRanker,
-    SimpleCompiler,
-    LocalRetriever,
     ContextSelector,
+    ContextType,
+    DeterministicRanker,
     FileSource,
-    TextSource,
+    LocalRetriever,
+    SimpleCompiler,
+    SQLiteStore,
     TaskSource,
-    ToolOutputSource,
     TestResultSource,
-    Normalizer,
-    normalize_sources,
-    DebuggingSession,
-    SessionStatus,
+    TextSource,
+    ToolOutputSource,
 )
-from contextforge.inspection import PipelineInspector, DebugContext
-from contextforge.retrieval.selector import SelectionResult
+from contextforge.inspection import DebugContext
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -76,10 +70,7 @@ def create_parser() -> argparse.ArgumentParser:
     compile_parser.add_argument("--output", help="Output file for package")
     compile_parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
 
-    # Inspect command
-    inspect_parser = subparsers.add_parser("inspect", help="Inspect pipeline stages")
-    inspect_parser.add_argument("--task-id", required=True, help="Task ID")
-    inspect_parser.add_argument("--stage", help="Specific stage to inspect")
+
 
     # Pipeline command (end-to-end)
     pipeline_parser = subparsers.add_parser("pipeline", help="Run full pipeline")
@@ -170,7 +161,7 @@ def cmd_compile(args: argparse.Namespace) -> int:
     ranked = ranker.rank(items, args.task_id, args.query)
 
     compiler = SimpleCompiler()
-    package = compiler.compile(ir, ranked)
+    package = compiler.compile(ir, ranked, query=args.query)
 
     if args.output:
         if args.format == "markdown":
@@ -185,13 +176,6 @@ def cmd_compile(args: argparse.Namespace) -> int:
         else:
             print(package.to_json())
 
-    return 0
-
-
-def cmd_inspect(args: argparse.Namespace) -> int:
-    """Inspect pipeline stages."""
-    # This would need a DebugContext to be passed in
-    print("Inspection requires a DebugContext. Use 'pipeline' command for full inspection.")
     return 0
 
 
@@ -240,8 +224,7 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
             all_items.extend(log_items)
             debug_ctx.raw_sources.append(log_source)
 
-    # Test results source (run tests and capture output)
-    import subprocess
+    # Test results source - use TestResultSource
     test_result = subprocess.run(
         [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"],
         cwd=Path(args.path).parent,
@@ -249,16 +232,28 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
         text=True,
         timeout=60,
     )
-    test_source = TextSource(
-        content=test_result.stdout + test_result.stderr,
-        source_id="pytest_output",
-        context_type=ContextType.TEST_RESULT,
+    test_source = TestResultSource(
+        test_output=test_result.stdout + test_result.stderr,
+        test_file="demo-app/tests/",
         task_id=args.task_id,
+        observer="pytest",
         importance=0.8,
     )
     test_items = test_source.fetch()
     all_items.extend(test_items)
     debug_ctx.raw_sources.append(test_source)
+
+    # Tool output source - capture any tool output (linter, etc.)
+    tool_source = ToolOutputSource(
+        tool_name="pytest",
+        output=test_result.stdout + test_result.stderr,
+        task_id=args.task_id,
+        observer="tool_ingestion",
+        importance=0.7,
+    )
+    tool_items = tool_source.fetch()
+    all_items.extend(tool_items)
+    debug_ctx.raw_sources.append(tool_source)
 
     raw_items = all_items
     debug_ctx.raw_sources = debug_ctx.raw_sources
@@ -301,7 +296,33 @@ def cmd_pipeline(args: argparse.Namespace) -> int:
 
     # 7. Compile
     compiler = SimpleCompiler()
-    package = compiler.compile_with_selection(ir, ranked, selection)
+    # Create debugging state with rejected hypotheses
+    from contextforge.models.debugging_state import (
+        DebuggingState,
+        DebuggingStatus,
+        RejectedHypothesis,
+    )
+    debugging_state = DebuggingState(
+        task_id=args.task_id,
+        task_description=args.task_desc,
+        status=DebuggingStatus.ACTIVE
+    )
+    # Add some example rejected hypotheses for demo
+    debugging_state.add_rejected_hypothesis(RejectedHypothesis(
+        hypothesis="JWT secret mismatch",
+        investigation="Checked JWT_SECRET config",
+        result="FALSE",
+        evidence=[],
+        rejected_by="debugger"
+    ))
+    debugging_state.add_rejected_hypothesis(RejectedHypothesis(
+        hypothesis="Refresh token rotation race condition",
+        investigation="Analyzed token refresh flow",
+        result="INCONCLUSIVE",
+        evidence=[],
+        rejected_by="debugger"
+    ))
+    package = compiler.compile_with_selection(ir, ranked, selection, query=args.query, debugging_state=debugging_state)
     debug_ctx.final_package = package
     debug_ctx.inspector.record_compilation(package, selection)
 
@@ -336,7 +357,6 @@ def main() -> int:
         "retrieve": cmd_retrieve,
         "rank": cmd_rank,
         "compile": cmd_compile,
-        "inspect": cmd_inspect,
         "pipeline": cmd_pipeline,
     }
 

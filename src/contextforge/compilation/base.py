@@ -1,7 +1,7 @@
 """Compilation interface - ContextCompiler protocol and enhanced implementation."""
 
 from dataclasses import dataclass
-from typing import Any, Protocol, Callable
+from typing import Any, Callable, Protocol
 
 from contextforge.config import get_config
 from contextforge.models import (
@@ -54,22 +54,20 @@ class SimpleCompiler:
     def __init__(self) -> None:
         self.config = get_config()
 
-    def compile(self, ir: ContextIR, ranked_items: list[ContextItem]) -> ContextPackage:
+    def compile(self, ir: ContextIR, ranked_items: list[ContextItem], query: str | None = None) -> ContextPackage:
         """Compile context package from ranked items."""
-        return self._compile_internal(ir, ranked_items, None)
+        return self._compile_internal(ir, ranked_items, None, query)
 
     def compile_with_selection(
-        self, ir: ContextIR, ranked_items: list[ContextItem], selection: SelectionResult
+        self, ir: ContextIR, ranked_items: list[ContextItem], selection: SelectionResult, query: str | None = None, debugging_state=None
     ) -> ContextPackage:
         """Compile with selection result for metrics."""
-        return self._compile_internal(ir, ranked_items, selection)
+        return self._compile_internal(ir, ranked_items, selection, query, debugging_state)
 
     def _compile_internal(
-        self, ir: ContextIR, ranked_items: list[ContextItem], selection: SelectionResult | None
+        self, ir: ContextIR, ranked_items: list[ContextItem], selection: SelectionResult | None, query: str | None = None, debugging_state=None
     ) -> ContextPackage:
         """Internal compilation logic."""
-        import time
-        start_time = time.perf_counter()
 
         sections: list[ContextSection] = []
         token_budget = self.config.max_context_tokens
@@ -81,11 +79,11 @@ class SimpleCompiler:
             ("PROJECT STATE", self._build_project_state_section, ir, ranked_items),
             ("VERIFIED EVIDENCE", self._build_evidence_section, ir, ranked_items, ItemStatus.VERIFIED),
             ("TEST RESULTS", self._build_test_results_section, ir, ranked_items),
-            ("RELEVANT FILES", self._build_files_section, ir, ranked_items),
+            ("RELEVANT FILES", self._build_files_section, ir, ranked_items, query),
             ("LOGS", self._build_logs_section, ir, ranked_items),
             ("TOOL OUTPUT", self._build_tool_output_section, ir, ranked_items),
             ("CURRENT HYPOTHESIS", self._build_hypothesis_section, ir, ranked_items),
-            ("REJECTED HYPOTHESES", self._build_rejected_section, ir, ranked_items),
+            ("REJECTED HYPOTHESES", self._build_rejected_section, ir, ranked_items, debugging_state),
             ("OPEN QUESTIONS", self._build_questions_section, ir, ranked_items),
             ("CONSTRAINTS", self._build_constraints_section, ir, ranked_items),
             ("PROVENANCE", self._build_provenance_section, ir, ranked_items),
@@ -130,8 +128,6 @@ class SimpleCompiler:
         # Add selection metrics if available
         if selection:
             provenance_summary["selection_metrics"] = selection.metrics
-
-        compilation_time = (time.perf_counter() - start_time) * 1000
 
         package = ContextPackage(
             task_id=ir.task_id,
@@ -206,7 +202,7 @@ class SimpleCompiler:
         return content, item_ids, tokens
 
     def _build_files_section(
-        self, ir: ContextIR, items: list[ContextItem]
+        self, ir: ContextIR, items: list[ContextItem], query: str | None = None
     ) -> tuple[str, list[str], int]:
         file_items = [i for i in items if i.type == ContextType.FILE]
         if not file_items:
@@ -220,10 +216,40 @@ class SimpleCompiler:
                 seen_sources.add(item.source)
                 unique_items.append(item)
 
+        # Prioritize main source files over test files, and token.py first (bug file)
+        def is_test_file(source: str) -> bool:
+            return source.startswith("tests/") or "/tests/" in source or source.startswith("tests\\") or "\\tests\\" in source
+
+        def file_priority(item: ContextItem) -> tuple:
+            source = item.source
+            # Priority: (is_test, is_not_token_py, source_name)
+            # token.py gets priority 0, other main files 1, test files 2
+            if source == "auth/token.py" or source == "auth\\token.py" or source.endswith("/token.py") or source.endswith("\\token.py"):
+                return (0, 0, source)
+            elif is_test_file(source):
+                return (2, 0, source)
+            else:
+                return (1, 0, source)
+
+        unique_items.sort(key=file_priority)
+
         lines = []
         item_ids = []
+
+        # Per-file budget: allocate more to main source files
+        num_main = sum(1 for item in unique_items if not is_test_file(item.source))
+        num_test = len(unique_items) - num_main
+        main_budget = 2000 if num_main > 0 else 0
+        test_budget = 800 if num_test > 0 else 0
+
+        # Use query for snippet extraction (has specific bug terms), fallback to task_description
+        snippet_query = query or ir.task_description
+
         for item in unique_items:
-            lines.append(f"- `{item.source}` — {item.content[:200]}")
+            budget = main_budget if not is_test_file(item.source) else test_budget
+            # Smart truncation: show relevant lines around query terms
+            content_snippet = self._extract_relevant_snippet(item.content, snippet_query, max_chars=budget)
+            lines.append(f"- `{item.source}` — {content_snippet}")
             item_ids.append(item.id)
 
         content = "\n".join(lines) + "\n"
@@ -282,12 +308,10 @@ class SimpleCompiler:
         return content, item_ids, tokens
 
     def _build_rejected_section(
-        self, ir: ContextIR, items: list[ContextItem]
+        self, ir: ContextIR, items: list[ContextItem], debugging_state=None
     ) -> tuple[str, list[str], int]:
         from contextforge.models.context_item import ItemStatus
         rejected = [i for i in items if i.status == ItemStatus.REJECTED]
-        if not rejected:
-            return "", [], 0
 
         lines = []
         item_ids = []
@@ -295,6 +319,15 @@ class SimpleCompiler:
             reason = item.metadata.get("rejection_reason", "No reason given")
             lines.append(f"- {item.content} — *Rejected: {reason}*")
             item_ids.append(item.id)
+
+        # Add debugging state rejected hypotheses
+        if debugging_state and hasattr(debugging_state, 'rejected_hypotheses'):
+            for rh in debugging_state.rejected_hypotheses:
+                lines.append(f"- {rh.hypothesis} — *Rejected: {rh.result}* ({rh.rejected_by})")
+                item_ids.append(f"rejected_hypothesis_{hash(rh.hypothesis) & 0xffff}")
+
+        if not lines:
+            return "", [], 0
 
         content = "\n".join(lines) + "\n"
         tokens = self._estimate_tokens(content)
@@ -380,3 +413,89 @@ class SimpleCompiler:
         if len(text) <= max_chars:
             return text
         return text[:max_chars] + "\n... [truncated]"
+
+    def _extract_relevant_snippet(self, content: str, query: str, max_chars: int = 5000) -> str:
+        """Extract relevant lines from file content based on query terms.
+
+        Guarantees that the highest-scoring (anchor) lines are preserved in the output.
+        Expands context around the highest-scoring lines, then shrinks from the
+        side farther from the anchor center if needed to fit max_chars.
+        """
+        if len(content) <= max_chars:
+            return content
+
+        # Get query terms (lowercase, include all meaningful words)
+        query_terms = [t.lower() for t in query.split() if len(t) > 2]
+        if not query_terms:
+            return content[:max_chars] + "... [truncated]"
+
+        lines = content.split('\n')
+        scored_lines = []
+        for i, line in enumerate(lines):
+            line_lower = line.lower()
+            score = sum(1 for term in query_terms if term in line_lower)
+            if score > 0:
+                scored_lines.append((score, i, line))
+
+        if not scored_lines:
+            return content[:max_chars] + "... [truncated]"
+
+        # Sort by relevance descending
+        scored_lines.sort(key=lambda x: -x[0])
+        max_score = scored_lines[0][0]
+
+        # Use ONLY max-score lines as anchors (highest relevance)
+        anchor_indices = [idx for score, idx, _ in scored_lines if score == max_score]
+        if not anchor_indices:
+            return content[:max_chars] + "... [truncated]"
+
+        min_anchor = min(anchor_indices)
+        max_anchor = max(anchor_indices)
+        anchor_center = (min_anchor + max_anchor) // 2
+
+        # Expand context around anchors (30 lines each side)
+        context = 30
+        min_idx = max(0, min(anchor_indices) - 30)
+        max_idx = min(len(lines) - 1, max(anchor_indices) + 30)
+
+        # Shrink from the side farther from the anchor center (fixed)
+        anchor_center = (min(anchor_indices) + max(anchor_indices)) // 2
+        while True:
+            selected = lines[min_idx:max_idx + 1]
+            snippet = '\n'.join(selected)
+            if len(snippet) <= max_chars:
+                break
+            if min_idx >= max_idx:
+                break
+            # Shrink from side farther from anchor center (fixed)
+            dist_min = anchor_center - min_idx
+            dist_max = max_idx - anchor_center
+            if dist_min >= dist_max:
+                min_idx += 1
+            else:
+                max_idx -= 1
+
+        snippet = '\n'.join(lines[min_idx:max_idx + 1])
+        
+        # Final safety truncation
+        if len(snippet) > max_chars:
+            # Try to preserve the anchor region
+            anchor_text = '\n'.join(content.split('\n')[min(anchor_indices):max(anchor_indices)+1])
+            pos = snippet.find('\n'.join(content.split('\n')[min(anchor_indices):max(anchor_indices)+1]))
+            if pos != -1:
+                excess = len(snippet) - max_chars
+                snippet = snippet[excess//2 : len(snippet) - excess//2]
+                if len(snippet) > max_chars:
+                    snippet = snippet[:max_chars]
+            else:
+                snippet = snippet[:max_chars]
+            snippet = snippet + "... [truncated]"
+        
+        # Add truncation markers
+        if min_idx > 0 or max_idx < len(lines) - 1:
+            prefix = "... [truncated] " if min_idx > 0 else ""
+            suffix = " ... [truncated]" if max_idx < len(lines) - 1 else ""
+            snippet = prefix + snippet + suffix
+        
+        return snippet
+

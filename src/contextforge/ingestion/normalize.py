@@ -141,7 +141,7 @@ class Normalizer:
 
     def _infer_importance_file(self, file_path: Path) -> float:
         """Infer importance based on file path patterns."""
-        path_str = str(file_path).lower()
+        path_str = str(file_path).lower().replace("\\", "/")
         # Test files are highly relevant for debugging
         if "test" in path_str:
             return 0.8
@@ -159,7 +159,6 @@ class Normalizer:
 
 def normalize_sources(sources: list[Any], task_id: str | None = None) -> list[ContextItem]:
     """Normalize a list of ContextSource objects into ContextItems."""
-    normalizer = Normalizer(task_id=task_id)
     items = []
     for source in sources:
         if hasattr(source, "fetch"):

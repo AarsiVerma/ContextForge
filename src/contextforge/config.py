@@ -38,7 +38,7 @@ class Config(BaseSettings):
 
     # Compilation
     max_context_tokens: int = Field(
-        default=8000,
+        default=12000,
         description="Maximum tokens in compiled context package",
     )
     section_priority_weights: dict[str, float] = Field(

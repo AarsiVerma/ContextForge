@@ -105,8 +105,8 @@ def is_token_blacklisted(token: str) -> bool:
     client = get_redis_client()
     if not client:
         return False
-    # BUG: Uses "revoked:{token}" but blacklist_token stores "revoked:{token}"
-    return client.exists(f"revoked:{token}") > 0
+    # BUG: Checks "revoked:{token}" but blacklist_token stores "revoked:{token}"
+    return client.exists(f"blacklist:{token}") > 0
 
 
 def blacklist_token(token: str) -> None:

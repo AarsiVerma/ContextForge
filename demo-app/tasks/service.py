@@ -51,15 +51,7 @@ class TaskService:
         # Get total count BEFORE pagination
         total = query.count()
 
-        # BUG INT-005: Pagination offset calculated before filter is applied
-        # The query already has filters, but let's verify the logic
-        # Actually the bug is more subtle - the offset calculation is correct
-        # but there's an issue with how the query is structured
-        # Let me add a more explicit bug: the query is not ordered consistently
-        # causing non-deterministic pagination
-
-        # BUG: Missing explicit ORDER BY causes non-deterministic pagination
-        query = query.order_by(Task.id)
+        # BUG INT-005: Missing explicit ORDER BY causes non-deterministic pagination
 
         # Apply pagination
         offset = (filters.page - 1) * filters.page_size

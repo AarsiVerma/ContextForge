@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-from contextforge.models import ContextItem, ContextIR, ContextPackage
+from contextforge.models import ContextItem, ContextPackage
 from contextforge.retrieval.selector import SelectionResult
 
 

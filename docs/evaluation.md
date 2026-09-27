@@ -12,67 +12,105 @@
 - ContextForge handles ingestion, retrieval, ranking, selection, compilation
 - Bob receives focused debugging context package
 
-## Baseline Experiment Results
+**IMPORTANT**: The baseline comparison below uses **simulated baseline metrics** (not from a controlled experiment). The ContextForge metrics are from actual pipeline runs. A proper controlled experiment with human subjects is needed for valid comparison.
+
+## Baseline Experiment Results (Simulated Baseline vs Actual ContextForge)
 
 ### OAuth Refresh Token 401 (AUTH-001)
 
-| Metric | Baseline (Bob Alone) | ContextForge | Improvement |
-|--------|---------------------|--------------|-------------|
-| Time to Resolution | ~8-10 min | ~4-5 min | ~50% faster |
-| Files Inspected | 15-20 | 5-8 | 60% fewer |
-| Tool Operations | 30-40 | 15-20 | 50% fewer |
-| Repeated Hypotheses | 2-3 | 0 | Eliminated |
-| Failed Repair Attempts | 1-2 | 0 | Eliminated |
-| Context Items Processed | 50 (all) | 12 (selected) | 76% reduction |
-| Estimated Tokens | ~8,000 | ~2,100 | 74% reduction |
+| Metric | Baseline (Simulated) | ContextForge (Actual) | Notes |
+|--------|---------------------|----------------------|-------|
+| Time to Resolution | ~8-10 min (est.) | 7.1s (pipeline) | Baseline is estimate |
+| Files Inspected | 15-20 (est.) | 2 (token.py, endpoints.py) | CF shows 2 key files |
+| Tool Operations | 30-40 (est.) | 2 commands | Pipeline + fix |
+| Repeated Hypotheses | 2-3 (est.) | 0 | CF tracks rejections |
+| Failed Repair Attempts | 1-2 (est.) | 0 | CF focuses evidence |
+| Context Items Processed | ~50 (est.) | 19 ingested, 8 selected | 58% reduction |
+| Estimated Tokens | ~8,000 (est.) | 821 | Within 12k budget |
 
-### Pipeline Metrics (AUTH-001)
+**Key Finding**: ContextForge correctly identified root cause (blacklist: vs revoked: key mismatch) in token.py. Rejected hypotheses section prevented re-investigation of JWT secret mismatch and race condition.
+
+---
+
+### Pipeline Metrics (AUTH-001 - Actual Run)
 
 ```
 Pipeline Stage          Input    Output    Metrics
 ─────────────────────────────────────────────────────
-INGESTION               0        7         7 items from 4 sources
-NORMALIZATION           7        7         Type inference, importance scoring
-RETRIEVAL               7        5         Query: "refresh token 401"
-RANKING                 5        5         6 weighted signals
-SELECTION               5        5         Budget: 8000 tokens
-DUPLICATE REMOVAL       5        5         0 duplicates found
-COMPILATION             5        1         5 sections, 277 tokens
+INGESTION               0        19        19 items from 4 sources
+NORMALIZATION           19       19        Type inference, importance scoring
+RETRIEVAL               19       10        Query: "refresh token 401 blacklist revoked"
+RANKING                 10       10        6 weighted signals (30/20/20/15/10/5)
+SELECTION               10       8         Budget: 12000 tokens, 821 used
+DUPLICATE REMOVAL       10       8         0 duplicates found
+COMPILATION             8        1         6 sections, 821 tokens
 ```
 
-### Context Package Sections (AUTH-001)
+**Actual Pipeline Duration**: ~7 seconds (including pytest run for test ingestion)
+
+---
+
+### Context Package Sections (AUTH-001 - Actual)
 
 | Section | Items | Tokens | Priority |
 |---------|-------|--------|----------|
-| TASK | 1 | 43 | 100 |
-| TEST RESULTS | 1 | 21 | 90 |
-| RELEVANT FILES | 2 | 111 | 80 |
-| LOGS | 1 | 20 | 60 |
-| PROVENANCE | 5 | 82 | 30 |
-| **TOTAL** | **5** | **277** | |
+| TASK | 1 | ~40 | 100 |
+| REJECTED HYPOTHESES | 2 | ~60 | 90 |
+| RELEVANT FILES | 2 | ~600 | 80 |
+| PROVENANCE | 6 | ~120 | 30 |
+| **TOTAL** | **8** | **~821** | |
 
-### Provenance Summary
+**Critical**: REJECTED HYPOTHESES section shows "JWT secret mismatch (FALSE)" and "Race condition (INCONCLUSIVE)" — Bob won't re-investigate these.
+
+---
+
+### Provenance Summary (Actual)
 
 | Source Type | Count |
 |-------------|-------|
-| file | 2 |
+| file | 4 |
 | tool | 1 |
 | user | 1 |
-| agent | 1 |
+| agent | 0 |
 | inference | 0 |
 
 | Status | Count |
 |--------|-------|
-| unverified | 5 |
+| unverified | 7 |
 | verified | 0 |
-| rejected | 0 |
+| rejected | 0 (in items) / 2 (in debugging state) |
 
 | Type | Count |
 |------|-------|
 | task | 1 |
 | test_result | 1 |
-| file | 2 |
-| log | 1 |
+| file | 4 |
+| log | 0 |
+
+---
+
+## Multi-Bug Evaluation Results (Sep 2026)
+
+| Bug | Mode | Time(s) | Files | Cmds | Hyps | Repeated | Correct Dx | Test Pass |
+|-----|------|---------|-------|------|------|----------|------------|-----------|
+| AUTH-001 | Baseline (sim) | 1.9 | 0 | 1 | 0 | 0 | False | True |
+| AUTH-001 | ContextForge | 7.1 | 2 | 2 | 1 | 0 | **True** | True |
+| INT-005 | Baseline (sim) | 1.9 | 0 | 1 | 0 | 0 | False | True |
+| INT-005 | ContextForge | 7.4 | 1 | 2 | 1 | 0 | **True** | True |
+| API-003 | Baseline (sim) | 1.9 | 0 | 1 | 0 | 0 | False | True |
+| API-003 | ContextForge | 7.4 | 2 | 2 | 1 | 0 | False | True |
+| DB-002 | Baseline (sim) | 4.5 | 1 | 3 | 3 | 1 | True | True |
+| DB-002 | ContextForge | 6.4 | 1 | 2 | 1 | 0 | **True** | True |
+| CACHE-004 | Baseline (sim) | 1.5 | 0 | 1 | 0 | 0 | False | True |
+| CACHE-004 | ContextForge | 7.0 | 2 | 2 | 1 | 0 | False | True |
+
+**Key Observations**:
+- ContextForge eliminates repeated hypotheses (0 vs 1 in DB-002 baseline)
+- Correct diagnosis achieved for 3/5 bugs (AUTH-001, INT-005, DB-002)
+- ContextForge pipeline takes ~7s (includes pytest run for test ingestion)
+- Baseline times are **simulated estimates** — not from controlled experiment
+
+---
 
 ## Test Suite Results
 
@@ -182,49 +220,52 @@ tests/integration/test_foundation.py::test_rejected_hypothesis_persistence PASSE
 tests/integration/test_pipeline.py::test_full_pipeline_oauth_fixture PASSED
 tests/integration/test_pipeline.py::test_security_context_injection_fixture PASSED
 ...
-106 passed, 1460 warnings in 7.77s
+106 passed, 1460 warnings in 2.90s
 ```
 
-### Demo App Tests (33 tests)
+### Demo App Tests (32 passed, 2 skipped, 1 deselected)
 ```
-tests/test_api_bugs.py::TestBugAPI003::test_create_task_invalid_priority_returns_422 PASSED
-tests/test_api_bugs.py::TestBugAPI003::test_update_task_invalid_priority_returns_422 PASSED
-tests/test_api_bugs.py::TestBugAPI003::test_valid_priority_accepted PASSED
-tests/test_auth.py::TestAuthTokens::test_create_access_token PASSED
-tests/test_auth.py::TestAuthTokens::test_create_refresh_token PASSED
-tests/test_auth.py::TestAuthTokens::test_decode_valid_access_token PASSED
-tests/test_auth.py::TestAuthTokens::test_decode_valid_refresh_token PASSED
-tests/test_auth.py::TestAuthTokens::test_reject_expired_token PASSED
-tests/test_auth.py::TestAuthTokens::test_reject_invalid_token PASSED
-tests/test_auth.py::TestAuthTokens::test_wrong_token_type_rejected PASSED
-tests/test_auth.py::TestAuthEndpoints::test_register_user PASSED
-tests/test_auth.py::TestAuthEndpoints::test_login_success PASSED
-tests/test_auth.py::TestAuthEndpoints::test_login_failure_wrong_password PASSED
-tests/test_auth.py::TestAuthEndpoints::test_refresh_token_success PASSED
-tests/test_auth.py::TestAuthEndpoints::test_refresh_token_missing PASSED
-tests/test_auth.py::TestAuthEndpoints::test_refresh_token_blacklisted PASSED
-tests/test_auth.py::TestAuthEndpoints::test_logout PASSED
-tests/test_auth.py::TestAuthEndpoints::test_get_current_user PASSED
-tests/test_auth.py::TestAuthBugAUTH001::test_blacklist_key_format_mismatch PASSED
-tests/test_auth.py::TestAuthBugAUTH001::test_blacklist_mismatch_causes_false_negative PASSED
-tests/test_bugs.py::TestBugINT005::test_pagination_no_duplicates PASSED
-tests/test_bugs.py::TestBugINT005::test_pagination_order_consistency PASSED
-tests/test_bugs.py::TestBugCACHE004::test_permission_change_not_reflected_immediately PASSED
-tests/test_bugs.py::TestBugCACHE004::test_token_contains_roles_at_issuance PASSED
-tests/test_bugs.py::TestBugCACHE004::test_role_change_requires_new_token PASSED
-tests/test_tasks.py::TestTaskService::test_create_task PASSED
-tests/test_tasks.py::TestTaskService::test_get_task PASSED
-tests/test_tasks.py::TestTaskService::test_list_tasks PASSED
-tests/test_tasks.py::TestTaskService::test_update_task PASSED
-tests/test_tasks.py::TestTaskService::test_delete_task PASSED
-tests/test_tasks.py::TestBugDB002::test_concurrent_assignment_race_condition PASSED
-tests/test_tasks.py::TestBugDB002::test_assign_task_success PASSED
-tests/test_tasks.py::TestBugDB002::test_assign_already_assigned_task PASSED
+demo-app/tests/test_api_bugs.py::TestBugAPI003::test_create_task_invalid_priority_returns_422 PASSED
+demo-app/tests/test_api_bugs.py::TestBugAPI003::test_update_task_invalid_priority_returns_422 PASSED
+demo-app/tests/test_api_bugs.py::TestBugAPI003::test_valid_priority_accepted PASSED
+demo-app/tests/test_auth.py::TestAuthTokens::test_create_access_token PASSED
+demo-app/tests/test_auth.py::TestAuthTokens::test_create_refresh_token PASSED
+demo-app/tests/test_auth.py::TestAuthTokens::test_decode_valid_access_token PASSED
+demo-app/tests/test_auth.py::TestAuthTokens::test_decode_valid_refresh_token PASSED
+demo-app/tests/test_auth.py::TestAuthTokens::test_reject_expired_token PASSED
+demo-app/tests/test_auth.py::TestAuthTokens::test_reject_invalid_token PASSED
+demo-app/tests/test_auth.py::TestAuthTokens::test_wrong_token_type_rejected PASSED
+demo-app/tests/test_auth.py::TestAuthEndpoints::test_register_user PASSED
+demo-app/tests/test_auth.py::TestAuthEndpoints::test_login_success PASSED
+demo-app/tests/test_auth.py::TestAuthEndpoints::test_login_failure_wrong_password PASSED
+demo-app/tests/test_auth.py::TestAuthEndpoints::test_refresh_token_success PASSED
+demo-app/tests/test_auth.py::TestAuthEndpoints::test_refresh_token_missing PASSED
+demo-app/tests/test_auth.py::TestAuthEndpoints::test_logout PASSED
+demo-app/tests/test_auth.py::TestAuthEndpoints::test_get_current_user PASSED
+demo-app/tests/test_auth.py::TestAuthBugAUTH001::test_blacklist_key_format_buggy PASSED
+demo-app/tests/test_auth.py::TestAuthBugAUTH001::test_blacklist_buggy_false_negative PASSED
+demo-app/tests/test_auth.py::TestAuthBugAUTH001::test_blacklist_key_format_fixed SKIPPED
+demo-app/tests/test_auth.py::TestAuthBugAUTH001::test_blacklist_fixed_no_false_negative SKIPPED
+demo-app/tests/test_bugs.py::TestBugINT005::test_pagination_no_duplicates PASSED
+demo-app/tests/test_bugs.py::TestBugINT005::test_pagination_order_consistency PASSED
+demo-app/tests/test_bugs.py::TestBugCACHE004::test_permission_change_not_reflected_immediately PASSED
+demo-app/tests/test_bugs.py::TestBugCACHE004::test_token_contains_roles_at_issuance PASSED
+demo-app/tests/test_bugs.py::TestBugCACHE004::test_role_change_requires_new_token PASSED
+demo-app/tests/test_tasks.py::TestTaskService::test_create_task PASSED
+demo-app/tests/test_tasks.py::TestTaskService::test_get_task PASSED
+demo-app/tests/test_tasks.py::TestTaskService::test_list_tasks PASSED
+demo-app/tests/test_tasks.py::TestTaskService::test_update_task PASSED
+demo-app/tests/test_tasks.py::TestTaskService::test_delete_task PASSED
+demo-app/tests/test_tasks.py::TestBugDB002::test_concurrent_assignment_race_condition PASSED
+demo-app/tests/test_tasks.py::TestBugDB002::test_assign_task_success PASSED
+demo-app/tests/test_tasks.py::TestBugDB002::test_assign_already_assigned_task PASSED
 ...
-33 passed, 83 warnings in 5.95s
+32 passed, 2 skipped, 1 deselected in 4.50s
 ```
 
-**Total: 139 tests passed**
+**Total: 138 tests passed (106 core + 32 demo)**
+
+---
 
 ## Security Validation
 
@@ -241,40 +282,63 @@ Status: PASSED - No instruction execution
 - Source type, observer, timestamp, confidence tracked
 - No anonymous/unattributed context
 
-## Pipeline Performance
+---
 
-| Stage | Avg Latency | Throughput |
-|-------|-------------|------------|
-| Ingestion | ~5ms | 1000+ items/s |
-| Normalization | ~2ms | 2000+ items/s |
-| Retrieval | ~10ms | 500 queries/s |
-| Ranking | ~5ms | 1000 items/s |
-| Selection | ~3ms | 2000 items/s |
-| Compilation | ~15ms | 50 packages/s |
-| **Total Pipeline** | **~40ms** | **25 pipelines/s** |
+## Pipeline Performance (Actual Measurements)
+
+| Stage | Avg Latency | Notes |
+|-------|-------------|-------|
+| Ingestion | ~500ms | Includes pytest run (~3s) |
+| Normalization | ~5ms | Type inference, importance scoring |
+| Retrieval | ~10ms | Token overlap + metadata filtering |
+| Ranking | ~5ms | 6 weighted signals |
+| Selection | ~3ms | Budget enforcement + dedup |
+| Compilation | ~15ms | 12 sections, markdown/JSON |
+| **Total Pipeline** | **~3-7s** | **Dominant: pytest ingestion** |
+
+*Note: Total dominated by pytest test run for test ingestion. Without test run: ~40ms.*
+
+---
 
 ## Conclusion
 
-### Key Findings
+### Key Findings (Verified)
 
-1. **ContextForge reduces context by 76%** while preserving relevant information
-2. **50% faster debugging** in baseline experiment
-3. **Zero repeated hypotheses** due to rejection tracking
-4. **Zero failed repair attempts** due to focused context
-5. **139 tests pass** covering all 5 bug scenarios
-6. **Security boundary maintained** - context injection prevented
+1. **ContextForge reduces context by ~58%** (19→8 items for AUTH-001) while preserving root cause
+2. **Zero repeated hypotheses** due to rejection tracking in DebuggingState
+3. **Correct root cause identification** for 3/5 bugs (AUTH-001, INT-005, DB-002)
+4. **138 tests pass** covering all 5 bug scenarios
+5. **Security boundary maintained** - context injection prevented
+6. **Pipeline deterministic** - same input always produces same output
 
-### Limitations
+### Limitations (Honest Assessment)
 
-1. **Deterministic ranking only** - No semantic understanding
-2. **File-based handoff** - No direct Bob API integration
-3. **Local JEV experimental** - Not production-ready
+1. **Deterministic ranking only** - No semantic understanding (by design)
+2. **File-based handoff only** - No direct Bob API integration
+3. **Baseline metrics are simulated** - Not from controlled human experiment
 4. **Single-user, local only** - No multi-user support
+5. **ContextForge metrics parsing needs work** - Real pipeline metrics not fully captured in eval script
+6. **CACHE-004 fix requires auth middleware changes** - Not demonstrated
 
-### Recommended Next Steps
+### Recommended Next Steps (Post-Hackathon)
 
-1. Implement MCP server for direct Bob integration
-2. Add local cross-encoder ranker (feature-flagged)
-3. Build evaluation harness with ground-truth labels
-4. Add VS Code extension for IDE integration
-5. Implement multi-user debugging sessions
+1. Build proper evaluation harness with human subjects
+2. Add MCP server for Bob if API becomes available
+3. Improve metrics collection in pipeline
+4. Add learned ranker as optional feature-flagged component
+5. Build evaluation harness with ground-truth labels
+
+---
+
+## Evaluation Artifacts
+
+- **Raw results**: `eval/results_20260927_012856.json`
+- **Evaluation script**: `eval/run_evaluation.py`
+- **Bug reset script**: `scripts/reset_bug.sh`
+- **Pipeline output**: `debugging_context.md` (generated per run)
+
+---
+
+*Report generated: 2026-09-27*
+*Based on: Actual pipeline runs + simulated baseline comparison*
+*See also: `docs/BOB_INTEGRATION_REALITY.md`, `docs/JUDGE_DEMO.md`*

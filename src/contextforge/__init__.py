@@ -1,43 +1,43 @@
 """ContextForge - Model-agnostic context management for AI coding agents."""
 
-from contextforge.compilation import ContextCompiler, SimpleCompiler, CompilationMetrics
+from contextforge.compilation import CompilationMetrics, ContextCompiler, SimpleCompiler
 from contextforge.ingestion import (
     ContextSource,
     FileSource,
-    TextSource,
-    TaskSource,
-    ToolOutputSource,
-    TestResultSource,
     Normalizer,
+    TaskSource,
+    TestResultSource,
+    TextSource,
+    ToolOutputSource,
     normalize_sources,
 )
 from contextforge.models import (
     Action,
+    ActionRecord,
     ActionType,
     ContextIR,
     ContextItem,
     ContextPackage,
+    ContextPackageRecord,
     ContextSection,
     ContextType,
     DebuggingSession,
     DebuggingState,
     DebuggingStatus,
     HypothesisRecord,
-    ActionRecord,
-    ContextPackageRecord,
-    SessionStatus,
     ItemStatus,
     Provenance,
     RejectedHypothesis,
+    SessionStatus,
     SourceType,
     VerificationInfo,
 )
 from contextforge.ranking import ContextRanker, DeterministicRanker
 from contextforge.retrieval import (
     ContextRetriever,
-    LocalRetriever,
-    DeterministicRetriever,
     ContextSelector,
+    DeterministicRetriever,
+    LocalRetriever,
     SelectionResult,
 )
 from contextforge.storage import ContextStore, SQLiteStore

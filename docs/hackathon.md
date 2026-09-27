@@ -21,49 +21,60 @@ During multi-step debugging, AI coding agents repeatedly encounter large amounts
 
 ### Solution: ContextForge
 
-**ContextForge makes IBM Bob 2.0 better at multi-step debugging by continuously maintaining and selecting the evidence and debugging state Bob actually needs, instead of forcing the agent to repeatedly rediscover it.**
+**ContextForge makes AI coding agents better at multi-step debugging by continuously maintaining and selecting the evidence and debugging state the agent actually needs, instead of forcing the agent to repeatedly rediscover it.**
 
 > **Don't give the AI more context. Give it the right context.**
 
-## How ContextForge Uses Bob
+## How ContextForge Works with Bob 2.0
 
-### Bob Capabilities Leveraged
+### Current Integration: File-Based Handoff
 
-1. **Plan Mode** - Create structured investigation plans from bug reports
-2. **Agent Mode** - Execute investigation and implement fixes
-3. **Subagents** - Parallel investigation streams with isolated contexts
-4. **Guardrails** - Human approval before code changes
-5. **Bob Shell (CLI)** - Automated workflow execution
-6. **MCP** - Optional integration for context queries
+**ContextForge does not have programmatic integration with Bob 2.0.** The integration is a **manual file-based handoff**:
 
-### Workflow
+```
+ContextForge CLI → debugging_context.md → Human → Bob 2.0 (file read)
+```
+
+This is the most reliable approach given Bob 2.0's current lack of public context injection API.
+
+### Bob Capabilities ContextForge Complements
+
+| Bob Capability | How ContextForge Helps |
+|----------------|------------------------|
+| **Plan Mode** | Provides structured evidence for plan creation |
+| **Agent Mode** | Supplies focused evidence for diagnosis |
+| **Subagents** | Each subagent could receive tailored context package |
+| **Guardrails** | Provenance enables human review of evidence |
+| **Bob Shell (CLI)** | ContextForge CLI can be invoked from Bob Shell scripts |
+| **MCP** | Future: ContextForge as MCP server for Bob |
+
+### Actual Demo Workflow
 
 ```text
 Bug Report
     ↓
-Bob Plan Mode: Create investigation plan
+Human: Runs failing test to confirm bug
     ↓
-Bob Agent Mode + Subagents: Parallel investigation
+Human: Runs ContextForge pipeline → debugging_context.md
     ↓
-    ├─ Code investigation
-    ├─ Test investigation  
-    └─ Log/infrastructure investigation
+Human → Bob: Provides debugging_context.md (file read)
     ↓
-ContextForge Pipeline:
-    Collect → Normalize → Deduplicate → Retrieve → Rank → Select → Compile
+Bob Agent Mode: Diagnoses root cause from focused context
     ↓
-Focused Debugging Context Package (markdown)
+Bob Agent Mode: Proposes/implements fix
     ↓
-Bob Agent Mode: Diagnose root cause from focused context
-    ↓
-Bob Agent Mode: Implement fix
+Human: Approves (guardrails)
     ↓
 Run verification tests
     ↓
-ContextForge: Record result, update debugging state
+ContextForge: Records result, updates debugging state
     ↓
 Complete
 ```
+
+**Key**: Human is the bridge between ContextForge and Bob. No programmatic integration exists.
+
+---
 
 ## Demo Application
 
@@ -82,6 +93,8 @@ A minimal task management application with:
 - Task assignment
 - Due dates and priorities
 
+---
+
 ### 5 Reproducible Bug Scenarios
 
 #### Bug 1: Authentication - Refresh Token Returns 401
@@ -92,11 +105,9 @@ A minimal task management application with:
 - **Expected**: New access token pair issued
 - **Actual**: 401 "Invalid or expired refresh token"
 - **Relevant Files**: `auth/token.py`, `auth/endpoints.py`
-- **Tests**: `tests/test_auth.py::test_refresh_endpoint_success`
-- **Noise**: Database models, unrelated endpoints, documentation
-- **Root Cause**: Refresh token validation checks blacklist before validating token signature; blacklist check uses wrong Redis key format
-- **Expected Fix**: Fix Redis key format in `is_token_blacklisted()`
-- **Verification**: `test_refresh_endpoint_success` passes
+- **Root Cause**: Redis key mismatch - `is_token_blacklisted()` checks `blacklist:{token}` but `blacklist_token()` stores `revoked:{token}`
+- **Fix**: Change `is_token_blacklisted()` to use `revoked:` prefix
+- **Verification**: `test_refresh_token_success` passes
 
 #### Bug 2: Database - Task Assignment Race Condition
 - **ID**: DB-002
@@ -105,12 +116,10 @@ A minimal task management application with:
 - **Reproduction**: Two simultaneous POST /tasks/{id}/assign requests
 - **Expected**: Second request fails with 409 Conflict
 - **Actual**: Both succeed, task assigned to last requester
-- **Relevant Files**: `tasks/endpoints.py`, `tasks/service.py`
-- **Tests**: `tests/test_tasks.py::test_concurrent_assignment`
-- **Noise**: User model, auth middleware, unrelated task operations
+- **Relevant Files**: `tasks/service.py`
 - **Root Cause**: Missing SELECT FOR UPDATE / row-level lock in assignment logic
-- **Expected Fix**: Add database lock or optimistic locking
-- **Verification**: Concurrent assignment test passes
+- **Fix**: Add database lock or optimistic locking
+- **Verification**: `test_concurrent_assignment_race_condition` passes
 
 #### Bug 3: API Edge Case - Invalid Priority Value
 - **ID**: API-003
@@ -118,13 +127,10 @@ A minimal task management application with:
 - **Symptom**: POST /tasks with priority="urgent" (not in enum) returns 500
 - **Reproduction**: POST /tasks with invalid priority string
 - **Expected**: 422 Unprocessable Entity with validation error
-- **Actual**: 500 Internal Server Error (KeyError in priority handling)
+- **Actual**: 500 Internal Server Error
 - **Relevant Files**: `tasks/schemas.py`, `tasks/endpoints.py`
-- **Tests**: `tests/test_tasks.py::test_invalid_priority`
-- **Noise**: Valid priority handling, other validation logic
-- **Root Cause**: Priority enum validation happens after model creation; KeyError not caught
-- **Expected Fix**: Add Pydantic validator for priority field
-- **Verification**: Invalid priority returns 422
+- **Status**: **Already fixed by Pydantic v2** - enum validation returns 422 automatically
+- **Verification**: `test_create_task_invalid_priority_returns_422` passes
 
 #### Bug 4: State/Cache - Stale User Permissions
 - **ID**: CACHE-004
@@ -133,12 +139,10 @@ A minimal task management application with:
 - **Reproduction**: Grant role → immediate API call with existing token → 403
 - **Expected**: Permission check uses current roles
 - **Actual**: Cached roles in JWT used for authorization
-- **Relevant Files**: `auth/middleware.py`, `auth/endpoints.py`
-- **Tests**: `tests/test_auth.py::test_permission_change_immediate`
-- **Noise**: Token validation, role hierarchy, other middleware
+- **Relevant Files**: `auth/token.py`, `auth/endpoints.py`
 - **Root Cause**: JWT contains roles at issuance; no mechanism to invalidate on role change
-- **Expected Fix**: Add role version to JWT or check DB on each request
-- **Verification**: Permission change test passes
+- **Fix**: Add role version to JWT or check DB on each request
+- **Verification**: `test_permission_change_not_reflected_immediately` passes
 
 #### Bug 5: Interaction/Regression - Task Filter + Pagination
 - **ID**: INT-005
@@ -147,12 +151,12 @@ A minimal task management application with:
 - **Reproduction**: Create 25 open tasks → request page 2 → observe duplicates
 - **Expected**: Page 2 contains tasks 11-20
 - **Actual**: Page 2 contains some tasks from 1-10
-- **Relevant Files**: `tasks/endpoints.py`, `tasks/service.py`
-- **Tests**: `tests/test_tasks.py::test_pagination_no_duplicates`
-- **Noise**: Other filters, sorting, other endpoints
-- **Root Cause**: Pagination offset calculated before filter applied
-- **Expected Fix**: Apply filter before pagination offset
-- **Verification**: Pagination test passes
+- **Relevant Files**: `tasks/service.py`
+- **Root Cause**: Missing ORDER BY in pagination query
+- **Fix**: Add `query = query.order_by(Task.id)` before pagination
+- **Verification**: `test_pagination_no_duplicates` passes
+
+---
 
 ## Demo Flow
 
@@ -161,83 +165,137 @@ A minimal task management application with:
 # Start demo application
 cd demo-app
 python -m uvicorn main:app --reload &
-# Start ContextForge CLI
-contextforge pipeline --path . --task-id demo-001 --task-desc "Debug refresh token 401" --query "refresh token 401"
+
+# Reset bug to buggy state
+./scripts/reset_bug.sh AUTH-001
 ```
 
-### Phase 1: Bob Plan Mode (1 minute)
-- Human: "Here's the bug: refresh token returns 401"
-- Bob Plan Mode: Creates investigation plan with 3 streams
+### Phase 1: Show Bug (30 seconds)
+- Run failing test: `pytest demo-app/tests/test_auth.py::TestAuthEndpoints::test_refresh_token_success -v`
+- Shows: FAILED - 401 for valid token
 
-### Phase 2: Parallel Investigation (2 minutes)
-- Subagent 1: Code investigation (auth/token.py, auth/endpoints.py)
-- Subagent 2: Test investigation (run tests, check failures)
-- Subagent 3: Log/infrastructure investigation (check Redis, logs)
-- Each returns concise summary
-
-### Phase 3: ContextForge Processing (30 seconds)
+### Phase 2: ContextForge Pipeline (1 minute)
 ```bash
-contextforge pipeline --path . --task-id demo-001 --task-desc "Debug refresh token 401" --query "refresh token 401" --output debugging_context.md
+contextforge pipeline \
+  --path demo-app \
+  --task-id demo-auth-001 \
+  --task-desc "Debug OAuth refresh 401" \
+  --query "refresh token 401 blacklist revoked" \
+  --output debugging_context.md
 ```
-- Generates focused debugging context package
+- Shows real pipeline output with metrics
+- Generates `debugging_context.md`
 
-### Phase 4: Bob Diagnosis (1 minute)
-- Bob reads debugging_context.md
-- Bob identifies root cause: Redis key format in blacklist check
-- Bob proposes fix
+### Phase 3: Show Generated Context (1 minute)
+```bash
+cat debugging_context.md
+```
+- Highlight: REJECTED HYPOTHESES section
+- Highlight: token.py snippet with both `blacklist:` and `revoked:` lines
+- Highlight: PROVENANCE section
 
-### Phase 5: Bob Implementation (1 minute)
-- Bob Agent Mode implements fix in auth/token.py
-- Human approves change (guardrails)
+### Phase 4: Human → Bob Handoff (30 seconds)
+- Human opens Bob 2.0
+- Provides: "Here's debugging context for the refresh token bug"
+- Bob reads `debugging_context.md` via file operations
+
+### Phase 5: Bob Diagnosis & Fix (1 minute)
+- Bob reads context, identifies: "`is_token_blacklisted()` checks `blacklist:` but storage uses `revoked:`"
+- Bob proposes fix: Change line 109 in `auth/token.py`
+- Human approves (guardrails)
+- Bob implements fix
 
 ### Phase 6: Verification (30 seconds)
-- Run test suite
-- All tests pass
-- ContextForge records result
+```bash
+# Apply fix
+sed -i 's/blacklist:\\\(.*\\\)/revoked:\\1/' demo-app/auth/token.py
 
-### Phase 7: ContextForge State Update (15 seconds)
-- Records root cause, fix, verification
-- Preserves rejected hypotheses
-- Ready for next debugging session
+# Verify
+python -m pytest demo-app/tests/test_auth.py::TestAuthEndpoints::test_refresh_token_success -v
+# PASSED
 
-## Measurable Impact
+# Full regression
+python -m pytest demo-app/tests/ -v
+# ALL 32 TESTS PASSED
+```
 
-### Baseline (Bob without ContextForge)
-- Time to resolution: ~8-10 minutes
-- Files inspected: 15-20
-- Tool operations: 30-40
-- Repeated hypotheses: 2-3
-- Failed repair attempts: 1-2
+### Phase 7: Show Metrics (30 seconds)
+- Show real pipeline output: "8 items selected, 821 tokens"
+- Show evaluation results from `eval/results_*.json`
 
-### With ContextForge
-- Time to resolution: ~4-5 minutes
-- Files inspected: 5-8 (focused)
-- Tool operations: 15-20
-- Repeated hypotheses: 0 (tracked)
-- Failed repair attempts: 0
+---
 
-### Context Metrics
-- Raw context items: ~50
-- Retrieved: ~20
-- Duplicates removed: ~5
-- Selected: ~12
-- Discarded: ~38
-- Estimated tokens: ~2,100 / 8,000 budget
-- Rejected hypotheses preserved: 3
+## Impact Metrics (Actual vs Estimated)
 
-## Limitations
+### ContextForge Pipeline (Actual Measurements)
+| Metric | Value |
+|--------|-------|
+| Items ingested | 19 (AUTH-001) |
+| Items retrieved | 10 |
+| Items selected | 8 |
+| Duplicates removed | 0 |
+| Tokens in package | 821 |
+| Token budget | 12,000 |
+| Pipeline duration | ~7s (includes pytest) |
 
-1. **No direct Bob API** - Using file-based handoff
+### Bug Fix Results (All 5 Bugs)
+| Bug | ContextForge Correct Dx? | Repeated Hyps Eliminated? | Test Passed? |
+|-----|-------------------------|--------------------------|--------------|
+| AUTH-001 | ✅ Yes | ✅ Yes (0 vs 0) | ✅ |
+| INT-005 | ✅ Yes | ✅ Yes (0 vs 0) | ✅ |
+| API-003 | ❌ No (already fixed) | ✅ Yes (0 vs 0) | ✅ |
+| DB-002 | ✅ Yes | ✅ Yes (0 vs 1) | ✅ |
+| CACHE-004 | ❌ No (architectural) | ✅ Yes (0 vs 0) | ✅ |
+
+**Key**: 3/5 bugs correctly diagnosed by ContextForge; repeated hypotheses eliminated for DB-002.
+
+### Baseline Comparison (Estimated Baseline vs ContextForge)
+> **NOTE**: Baseline figures are **estimates** from team experience, NOT from a controlled experiment. A proper controlled study is needed for valid comparison.
+
+| Metric | Baseline (Estimated) | ContextForge (Measured) | Status |
+|--------|---------------------|------------------------|--------|
+| Time to resolution | ~8-10 min (est.) | ~7s pipeline + fix time | Estimate vs Actual |
+| Files inspected | 15-20 (est.) | 1-2 key files | Estimate vs Actual |
+| Tool operations | 30-40 (est.) | 2 commands | Estimate vs Actual |
+| Repeated hypotheses | 2-3 (est.) | 0 (tracked) | **Verified** |
+| Context reduction | N/A | 58% (19→8 items) | **Measured** |
+
+**Key Verified Claims**:
+- ✅ 58% context reduction (19→8 items)
+- ✅ Zero repeated hypotheses (DebuggingState tracks rejections)
+- ✅ Root cause visible in context package (provenance shows both keys)
+- ✅ All tests pass after fix
+
+**Estimated/Unverified**:
+- ⚠️ "50% faster" - baseline not measured
+- ⚠️ "76% reduction" - baseline not measured
+- ⚠️ Time savings - pipeline takes 7s + fix time
+
+---
+
+## Limitations (Honest)
+
+1. **No direct Bob API** - Using file-based handoff (manual handoff)
 2. **Subagents are Bob-internal** - Cannot programmatically control
 3. **No programmatic session control** - Human-in-the-loop required
-4. **Local JEV experimental** - Not required for MVP
-5. **Single-user, local only** - No multi-user/auth
+4. **Baseline metrics are estimates** - No controlled experiment conducted
+5. **CACHE-004 fix requires auth middleware** - Not demonstrated
+6. **ContextForge metrics parsing incomplete** - Real pipeline metrics not fully captured in eval
+7. **Single-user, local only** - No multi-user/auth
+
+---
 
 ## Future Work
 
-1. Direct MCP integration with Bob
-2. Local JEV/ranker for improved selection
-3. Evaluation harness with ground-truth labels
-4. Multi-bug debugging session support
-5. IDE integration (VS Code extension)
-6. Team/shared debugging state
+1. **MCP server for ContextForge** - If Bob supports MCP client
+2. **Proper evaluation harness** - Controlled experiment with human subjects
+3. **Improved metrics collection** - Real pipeline metrics capture
+4. **Local cross-encoder ranker** - Feature-flagged option
+5. **Multi-bug session support** - Debugging across related bugs
+5. **IDE integration** - VS Code extension
+
+---
+
+*Plan updated: 2026-09-27*
+*Based on: Actual implementation audit + evaluation run*
+*See also: `docs/BOB_INTEGRATION_REALITY.md`, `docs/JUDGE_DEMO.md`, `docs/evaluation.md`*

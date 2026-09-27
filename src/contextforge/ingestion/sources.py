@@ -1,9 +1,7 @@
 """ContextSource implementations for ingesting from various sources."""
 
 from pathlib import Path
-from typing import Any
 
-from contextforge.ingestion.base import ContextSource
 from contextforge.models import (
     ContextItem,
     ContextType,

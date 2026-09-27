@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from typing import Any
 
-from contextforge.models import ContextItem
 from contextforge.config import get_config
+from contextforge.models import ContextItem
 
 
 @dataclass

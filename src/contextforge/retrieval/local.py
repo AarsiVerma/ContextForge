@@ -1,9 +1,7 @@
 """Deterministic local retrieval backend implementation."""
 
-from typing import Any
 
-from contextforge.models import ContextItem, ContextIR
-from contextforge.retrieval.base import ContextRetriever
+from contextforge.models import ContextIR, ContextItem
 from contextforge.storage.base import ContextStore
 
 
